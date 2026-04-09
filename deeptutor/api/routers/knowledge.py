@@ -806,6 +806,10 @@ async def clear_progress(kb_name: str):
 @router.websocket("/{kb_name}/progress/ws")
 async def websocket_progress(websocket: WebSocket, kb_name: str):
     """WebSocket endpoint for real-time progress updates"""
+    # Resolve authoritative name for case-insensitive matching
+    manager = get_kb_manager()
+    kb_name = manager._resolve_name(kb_name) or kb_name
+
     await websocket.accept()
 
     broadcaster = ProgressBroadcaster.get_instance()

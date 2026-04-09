@@ -177,14 +177,14 @@ class KnowledgeBaseInitializer:
         file_paths = [str(doc_file) for doc_file in doc_files]
 
         try:
-            success = await rag_service.initialize(kb_name=self.kb_name, file_paths=file_paths)
+            success, error_msg = await rag_service.initialize(kb_name=self.kb_name, file_paths=file_paths)
             if not success:
                 self.progress_tracker.update(
                     ProgressStage.ERROR,
                     "Document processing failed",
-                    error="RAG pipeline returned failure",
+                    error=error_msg or "RAG pipeline returned failure",
                 )
-                raise RuntimeError("RAG pipeline returned failure")
+                raise RuntimeError(error_msg or "RAG pipeline returned failure")
 
             self._update_metadata_with_provider(provider)
             self.progress_tracker.update(

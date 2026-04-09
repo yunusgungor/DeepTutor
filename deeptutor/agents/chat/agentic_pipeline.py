@@ -735,7 +735,11 @@ class AgenticChatPipeline:
 
         action = str(payload.get("action") or "done").strip()
         action_input = payload.get("action_input") or {}
-        if not isinstance(action_input, dict):
+        
+        # Handle string action_input by mapping to primary parameter (usually 'query')
+        if isinstance(action_input, str):
+            action_input = {"query": action_input}
+        elif not isinstance(action_input, dict):
             action_input = {}
 
         if action == "done":

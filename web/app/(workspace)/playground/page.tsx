@@ -1025,6 +1025,8 @@ function DeepResearchTester({
     setStreaming(true);
 
     try {
+      if (!validation.valid) return;
+      
       const res = await fetch(
         apiUrl(`/api/v1/plugins/capabilities/${capability.name}/execute-stream`),
         {
@@ -1174,7 +1176,7 @@ function DeepResearchTester({
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); run(); } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && validation.valid) { e.preventDefault(); run(); } }}
           rows={3}
           placeholder={t("Describe the research topic...")}
           className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"

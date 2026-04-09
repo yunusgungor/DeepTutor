@@ -632,6 +632,10 @@ export default function HomePage() {
       config = buildMathAnimatorWSConfig(mathAnimatorConfig);
     }
     if (isResearchMode) {
+      if (!researchValidation.valid) {
+        setResearchPanelCollapsed(false);
+        return;
+      }
       config = buildResearchWSConfig(researchConfig);
     }
 
@@ -818,9 +822,21 @@ export default function HomePage() {
             );
           }}
           onTextareaKeyDown={(event) => {
+            const isSendable =
+              (input.trim() ||
+                attachments.length ||
+                selectedNotebookRecords.length ||
+                selectedHistorySessions.length) &&
+              !state.isStreaming &&
+              (!isResearchMode || researchValidation.valid);
+
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              void handleSend();
+              if (isSendable) {
+                void handleSend();
+              } else if (isResearchMode && !researchValidation.valid) {
+                 setResearchPanelCollapsed(false);
+              }
             } else if (event.key === "Escape") {
               setShowAtPopup(false);
             }

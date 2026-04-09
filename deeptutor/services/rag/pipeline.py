@@ -37,7 +37,7 @@ class RAGPipeline:
             .retriever(DenseRetriever())
         )
 
-        await pipeline.initialize("kb_name", ["doc1.pdf"])
+        success, error_msg = await pipeline.initialize("kb_name", ["doc1.pdf"])
         result = await pipeline.search("query", "kb_name")
     """
 
@@ -84,7 +84,7 @@ class RAGPipeline:
         self._retriever = r
         return self
 
-    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> bool:
+    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> tuple[bool, str]:
         """
         Run full initialization pipeline.
 
@@ -98,73 +98,78 @@ class RAGPipeline:
             **kwargs: Additional arguments passed to components
 
         Returns:
-            True if successful
+            Tuple of (success: bool, error_msg: str)
         """
-        self.logger.info(f"Initializing KB '{kb_name}' with {len(file_paths)} files")
+        try:
+            self.logger.info(f"Initializing KB '{kb_name}' with {len(file_paths)} files")
 
-        if not self._parser:
-            raise ValueError("No parser configured. Use .parser() to set one")
+            if not self._parser:
+                raise ValueError("No parser configured. Use .parser() to set one")
 
         # Stage 1: Parse documents with file type routing
-        self.logger.info("Stage 1: Parsing documents...")
+            self.logger.info("Stage 1: Parsing documents...")
 
-        # Classify files by type
-        classification = FileTypeRouter.classify_files(file_paths)
-        self.logger.info(
-            f"File classification: {len(classification.parser_files)} parser, "
-            f"{len(classification.text_files)} text, "
-            f"{len(classification.unsupported)} unsupported"
-        )
-
-        documents = []
-
-        # Process complex files (PDF, etc.) with configured parser
-        for path in classification.parser_files:
-            self.logger.info(f"Parsing (parser): {Path(path).name}")
-            doc = await self._parser.process(path, **kwargs)
-            documents.append(doc)
-
-        # Process text files directly (fast path)
-        for path in classification.text_files:
-            self.logger.info(f"Parsing (direct text): {Path(path).name}")
-            content = await FileTypeRouter.read_text_file(path)
-            doc = Document(
-                content=content,
-                file_path=str(path),
-                metadata={
-                    "filename": Path(path).name,
-                    "parser": "direct_text",
-                },
+            # Classify files by type
+            classification = FileTypeRouter.classify_files(file_paths)
+            self.logger.info(
+                f"File classification: {len(classification.parser_files)} parser, "
+                f"{len(classification.text_files)} text, "
+                f"{len(classification.unsupported)} unsupported"
             )
-            documents.append(doc)
 
-        # Log unsupported files
-        for path in classification.unsupported:
-            self.logger.warning(f"Skipped unsupported file: {Path(path).name}")
+            documents = []
 
-        # Stage 2: Chunk (sequential - later chunkers see earlier results)
-        if self._chunkers:
-            self.logger.info("Stage 2: Chunking...")
-            for chunker in self._chunkers:
+            # Process complex files (PDF, etc.) with configured parser
+            for path in classification.parser_files:
+                self.logger.info(f"Parsing (parser): {Path(path).name}")
+                doc = await self._parser.process(path, **kwargs)
+                documents.append(doc)
+
+            # Process text files directly (fast path)
+            for path in classification.text_files:
+                self.logger.info(f"Parsing (direct text): {Path(path).name}")
+                content = await FileTypeRouter.read_text_file(path)
+                doc = Document(
+                    content=content,
+                    file_path=str(path),
+                    metadata={
+                        "filename": Path(path).name,
+                        "parser": "direct_text",
+                    },
+                )
+                documents.append(doc)
+
+            # Log unsupported files
+            for path in classification.unsupported:
+                self.logger.warning(f"Skipped unsupported file: {Path(path).name}")
+
+            # Stage 2: Chunk (sequential - later chunkers see earlier results)
+            if self._chunkers:
+                self.logger.info("Stage 2: Chunking...")
+                for chunker in self._chunkers:
+                    for doc in documents:
+                        new_chunks = await chunker.process(doc, **kwargs)
+                        doc.chunks.extend(new_chunks)
+
+            # Stage 3: Embed
+            if self._embedder:
+                self.logger.info("Stage 3: Embedding...")
                 for doc in documents:
-                    new_chunks = await chunker.process(doc, **kwargs)
-                    doc.chunks.extend(new_chunks)
+                    await self._embedder.process(doc, **kwargs)
 
-        # Stage 3: Embed
-        if self._embedder:
-            self.logger.info("Stage 3: Embedding...")
-            for doc in documents:
-                await self._embedder.process(doc, **kwargs)
+            # Stage 4: Index (can run in parallel)
+            if self._indexers:
+                self.logger.info("Stage 4: Indexing...")
+                await asyncio.gather(
+                    *[indexer.process(kb_name, documents, **kwargs) for indexer in self._indexers]
+                )
 
-        # Stage 4: Index (can run in parallel)
-        if self._indexers:
-            self.logger.info("Stage 4: Indexing...")
-            await asyncio.gather(
-                *[indexer.process(kb_name, documents, **kwargs) for indexer in self._indexers]
-            )
-
-        self.logger.info(f"KB '{kb_name}' initialized successfully")
-        return True
+                self.logger.info(f"KB '{kb_name}' initialized successfully")
+                return True, ""
+        except Exception as e:
+            error_msg = f"Failed to initialize KB: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
 
     async def search(self, query: str, kb_name: str, **kwargs) -> Dict[str, Any]:
         """

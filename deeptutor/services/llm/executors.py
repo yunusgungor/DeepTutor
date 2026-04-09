@@ -85,34 +85,33 @@ async def sdk_complete(
     if extra_headers:
         default_headers.update(extra_headers)
 
-    client = AsyncOpenAI(
+    async with AsyncOpenAI(
         api_key=effective_key or "no-key",
         base_url=effective_base,
         default_headers=default_headers,
         max_retries=0,
-    )
+    ) as client:
+        max_tokens_val = int(kwargs.pop("max_tokens", 4096))
+        temperature_val = float(kwargs.pop("temperature", 0.7))
 
-    max_tokens_val = int(kwargs.pop("max_tokens", 4096))
-    temperature_val = float(kwargs.pop("temperature", 0.7))
+        payload: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": _build_messages(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                messages=messages,
+            ),
+            "temperature": temperature_val,
+        }
 
-    payload: dict[str, Any] = {
-        "model": resolved_model,
-        "messages": _build_messages(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            messages=messages,
-        ),
-        "temperature": temperature_val,
-    }
+        token_kwargs = get_token_limit_kwargs(resolved_model, max_tokens_val)
+        payload.update(token_kwargs)
 
-    token_kwargs = get_token_limit_kwargs(resolved_model, max_tokens_val)
-    payload.update(token_kwargs)
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        payload.update(kwargs)
 
-    if reasoning_effort:
-        payload["reasoning_effort"] = reasoning_effort
-    payload.update(kwargs)
-
-    response = await client.chat.completions.create(**payload)
+        response = await client.chat.completions.create(**payload)
     choices = getattr(response, "choices", None) or []
     if not choices:
         return ""
@@ -146,48 +145,47 @@ async def sdk_stream(
     if extra_headers:
         default_headers.update(extra_headers)
 
-    client = AsyncOpenAI(
+    async with AsyncOpenAI(
         api_key=effective_key or "no-key",
         base_url=effective_base,
         default_headers=default_headers,
         max_retries=0,
-    )
+    ) as client:
+        max_tokens_val = int(kwargs.pop("max_tokens", 4096))
+        temperature_val = float(kwargs.pop("temperature", 0.7))
 
-    max_tokens_val = int(kwargs.pop("max_tokens", 4096))
-    temperature_val = float(kwargs.pop("temperature", 0.7))
+        payload: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": _build_messages(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                messages=messages,
+            ),
+            "temperature": temperature_val,
+            "stream": True,
+        }
 
-    payload: dict[str, Any] = {
-        "model": resolved_model,
-        "messages": _build_messages(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            messages=messages,
-        ),
-        "temperature": temperature_val,
-        "stream": True,
-    }
+        token_kwargs = get_token_limit_kwargs(resolved_model, max_tokens_val)
+        payload.update(token_kwargs)
 
-    token_kwargs = get_token_limit_kwargs(resolved_model, max_tokens_val)
-    payload.update(token_kwargs)
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        payload.update(kwargs)
 
-    if reasoning_effort:
-        payload["reasoning_effort"] = reasoning_effort
-    payload.update(kwargs)
-
-    stream_response = await client.chat.completions.create(**payload)
-    async for chunk in stream_response:
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        choice = choices[0]
-        delta = getattr(choice, "delta", None)
-        if delta is None and isinstance(choice, dict):
-            delta = choice.get("delta")
-        if delta is None:
-            continue
-        raw_content = getattr(delta, "content", None) if not isinstance(delta, dict) else delta.get("content")
-        if raw_content is None:
-            continue
-        content = extract_response_content(delta)
-        if content:
-            yield content
+        stream_response = await client.chat.completions.create(**payload)
+        async for chunk in stream_response:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is None and isinstance(choice, dict):
+                delta = choice.get("delta")
+            if delta is None:
+                continue
+            raw_content = getattr(delta, "content", None) if not isinstance(delta, dict) else delta.get("content")
+            if raw_content is None:
+                continue
+            content = extract_response_content(delta)
+            if content:
+                yield content

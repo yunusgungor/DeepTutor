@@ -175,6 +175,7 @@ def _has_cairo_pkgconfig() -> bool:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
+        shell=(os.name == "nt"),
     )
     return check.returncode == 0
 
@@ -286,7 +287,7 @@ def _install_commands(
 
 def _run_cmd(cmd: list[str], cwd: Path) -> None:
     log_info(f"{dim(str(cwd))}  {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(cwd), check=False)
+    result = subprocess.run(cmd, cwd=str(cwd), check=False, shell=(os.name == "nt"))
     if result.returncode != 0:
         raise RuntimeError(f"Command failed (exit {result.returncode}): {' '.join(cmd)}")
 
@@ -468,6 +469,7 @@ def _spawn_process(
     kwargs: dict[str, object] = {
         "cwd": str(cwd),
         "env": env,
+        "shell": (os.name == "nt"),
         **_stream_text_kwargs(),
     }
     if os.name == "nt":

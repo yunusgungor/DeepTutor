@@ -66,17 +66,51 @@ class CustomEmbedding(BaseEmbedding):
 
     async def _aget_query_embedding(self, query: str) -> List[float]:
         """Get embedding for a query."""
-        embeddings = await self._client.embed([query])
-        return embeddings[0]
+        try:
+            embeddings = await self._client.embed([query])
+            if not embeddings or embeddings[0] is None:
+                raise RuntimeError("Embedding API returned empty or None result for query")
+            
+            emb = embeddings[0]
+            if emb is None:
+                 raise RuntimeError("Embedding API returned None for query")
+            
+            import numpy as np
+            emb_np = np.array(emb)
+            if np.any(np.equal(emb_np, None)):
+                 raise RuntimeError("Embedding API returned a corrupt query vector containing nulls")
+                 
+            return emb
+        except Exception as e:
+            self._logger.error(f"Failed to get query embedding: {e}")
+            raise
 
     async def _aget_text_embedding(self, text: str) -> List[float]:
         """Get embedding for a text."""
-        embeddings = await self._client.embed([text])
-        return embeddings[0]
+        try:
+            embeddings = await self._client.embed([text])
+            if not embeddings or embeddings[0] is None:
+                raise RuntimeError("Embedding API returned empty or None result for text")
+            return embeddings[0]
+        except Exception as e:
+            self._logger.error(f"Failed to get text embedding: {e}")
+            raise
 
     async def _aget_text_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Get embeddings for multiple texts."""
-        return await self._client.embed(texts)
+        try:
+            embeddings = await self._client.embed(texts)
+            if len(embeddings) != len(texts):
+                raise RuntimeError(
+                    f"Embedding API returned {len(embeddings)} vectors for {len(texts)} texts. "
+                    "Mismatch detected."
+                )
+            if any(e is None for e in embeddings):
+                raise RuntimeError("Embedding API returned None for one or more texts in batch")
+            return embeddings
+        except Exception as e:
+            self._logger.error(f"Failed to get batch text embeddings: {e}")
+            raise
 
     def _get_query_embedding(self, query: str) -> List[float]:
         """Sync version - called by LlamaIndex sync API."""
@@ -146,7 +180,7 @@ class LlamaIndexPipeline:
                 f"Cannot reach embedding API. Please check your embedding configuration. Error: {e}"
             ) from e
 
-    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> bool:
+    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> tuple[bool, str]:
         """
         Initialize KB using real LlamaIndex components.
 
@@ -215,7 +249,7 @@ class LlamaIndexPipeline:
 
             if not documents:
                 self.logger.error("No valid documents found")
-                return False
+                return False, "No valid documents found"
 
             self.logger.info(
                 f"Creating VectorStoreIndex with {len(documents)} documents "
@@ -225,22 +259,33 @@ class LlamaIndexPipeline:
             loop = asyncio.get_event_loop()
             index = await loop.run_in_executor(
                 None,
-                lambda: VectorStoreIndex.from_documents(documents, show_progress=True),
+                lambda: VectorStoreIndex.from_documents(
+                    documents, 
+                    show_progress=True,
+                    embed_model=Settings.embed_model
+                ),
             )
 
             # Persist index
             index.storage_context.persist(persist_dir=str(storage_dir))
-            self.logger.info(f"Index persisted to {storage_dir}")
+            
+            # Log count
+            try:
+                node_count = len(index.docstore.docs)
+                self.logger.warning(f"KB '{kb_name}' ready with {node_count} document nodes.")
+            except:
+                pass
 
             self.logger.info(f"KB '{kb_name}' initialized successfully with LlamaIndex")
-            return True
+            return True, ""
 
         except Exception as e:
-            self.logger.error(f"Failed to initialize KB: {e}")
+            error_msg = f"Failed to initialize KB: {e}"
+            self.logger.error(error_msg)
             import traceback
 
             self.logger.error(traceback.format_exc())
-            return False
+            return False, error_msg
 
     def _extract_pdf_text(self, file_path: Path) -> str:
         """Extract text from PDF using PyMuPDF."""
@@ -278,6 +323,15 @@ class LlamaIndexPipeline:
             Search results dictionary with answer, content, and sources
         """
         kwargs.pop("mode", None)
+        if not query or not query.strip():
+            self.logger.warning("Empty query received")
+            return {
+                "query": query,
+                "answer": "Please enter a search query.",
+                "content": "",
+                "provider": "llamaindex",
+            }
+
         self.logger.info(f"Searching KB '{kb_name}' with query: {query[:50]}...")
 
         kb_dir = Path(self.kb_base_dir) / kb_name
@@ -299,8 +353,57 @@ class LlamaIndexPipeline:
 
             def load_and_retrieve():
                 storage_context = StorageContext.from_defaults(persist_dir=str(storage_dir))
-                index = load_index_from_storage(storage_context)
+                index = load_index_from_storage(
+                    storage_context, 
+                    embed_model=Settings.embed_model
+                )
                 top_k = kwargs.get("top_k", 5)
+
+                # Self-healing: Check for and remove corrupt nodes (null embeddings)
+                try:
+                    import numpy as np
+                    vector_store = index.storage_context.vector_store
+                    embeddings_dict = None
+                    
+                    if hasattr(vector_store, "_data") and hasattr(vector_store._data, "embeddings"):
+                        embeddings_dict = vector_store._data.embeddings
+                    elif hasattr(vector_store, "embeddings"):
+                        embeddings_dict = vector_store.embeddings
+                    
+                    if embeddings_dict is not None:
+                        corrupt_ids = []
+                        total_checked = 0
+                        for node_id, emb in list(embeddings_dict.items()):
+                            total_checked += 1
+                            if emb is None:
+                                corrupt_ids.append(node_id)
+                                continue
+                            
+                            # Extremely thorough check for None/NaN in vector
+                            try:
+                                emb_np = np.array(emb)
+                                if emb_np.dtype == object:
+                                    if np.any(np.equal(emb_np, None)):
+                                        corrupt_ids.append(node_id)
+                            except Exception:
+                                corrupt_ids.append(node_id)
+                        
+                        if corrupt_ids:
+                            self.logger.warning(
+                                f"!!! CRITICAL SELF-HEALING !!! Found {len(corrupt_ids)} corrupt nodes in '{kb_name}'. Removing them..."
+                            )
+                            for node_id in corrupt_ids:
+                                embeddings_dict.pop(node_id, None)
+                                if hasattr(vector_store, "_data") and hasattr(vector_store._data, "metadata"):
+                                    vector_store._data.metadata.pop(node_id, None)
+                                elif hasattr(vector_store, "metadata"):
+                                    vector_store.metadata.pop(node_id, None)
+                        else:
+                            self.logger.warning(f"Index check passed: {total_checked} nodes verified for '{kb_name}'.")
+                    else:
+                        self.logger.warning("Could not find embeddings dictionary for self-healing check!")
+                except Exception as e:
+                    self.logger.error(f"Index self-healing CRASHED: {e}")
 
                 # Use retriever instead of query_engine to avoid LLM requirement
                 retriever = index.as_retriever(similarity_top_k=top_k)

@@ -73,11 +73,11 @@ async def initialize_rag(
         **kwargs: Additional arguments passed to pipeline
 
     Returns:
-        True if successful
+        Tuple of (success: bool, error_msg: str)
 
     Example:
         documents = ["doc1.pdf", "doc2.txt"]
-        success = await initialize_rag("my_kb", documents)
+        success, error_msg = await initialize_rag("my_kb", documents)
     """
     service = RAGService(kb_base_dir=kb_base_dir, provider=provider)
     return await service.initialize(kb_name=kb_name, file_paths=documents, **kwargs)

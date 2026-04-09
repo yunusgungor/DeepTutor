@@ -84,10 +84,11 @@ class RAGService:
             self._pipeline = get_pipeline(self.provider, kb_base_dir=self.kb_base_dir)
         return self._pipeline
 
-    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> bool:
+    async def initialize(self, kb_name: str, file_paths: List[str], **kwargs) -> tuple[bool, str]:
         self.logger.info(f"Initializing KB '{kb_name}' with provider '{self.provider}'")
         pipeline = self._get_pipeline()
-        return await pipeline.initialize(kb_name=kb_name, file_paths=file_paths, **kwargs)
+        success, error_msg = await pipeline.initialize(kb_name=kb_name, file_paths=file_paths, **kwargs)
+        return success, error_msg
 
     async def search(
         self,

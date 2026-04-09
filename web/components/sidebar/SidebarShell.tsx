@@ -150,7 +150,13 @@ export function SidebarShell({
       {/* Header: logo + collapse toggle */}
       <div className="flex h-12 items-center justify-between px-4">
         <Link href="/" className="flex items-center gap-2">
-          <Image src="/logo-ver2.png" alt="DeepTutor" width={20} height={20} />
+          <Image
+            src="/logo-ver2.png"
+            alt="DeepTutor"
+            width={20}
+            height={20}
+            style={{ width: "auto" }}
+          />
           <span className="text-[15px] font-semibold tracking-tight text-[var(--foreground)]">
             DeepTutor
           </span>

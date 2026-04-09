@@ -71,16 +71,41 @@ class OpenAICompatibleEmbeddingAdapter(BaseEmbeddingAdapter):
             if isinstance(output.get("embeddings"), list):
                 candidates.append(output["embeddings"])
 
+        # Determine expected length from first candidate to ensure we don't return partial lists
+        # which would break LlamaIndex's 1-to-1 mapping.
         for c in candidates:
             if not c:
                 continue
+            
             first = c[0]
-            # list of {"embedding":[...]}
             if isinstance(first, dict) and "embedding" in first:
-                return [item.get("embedding", []) for item in c if isinstance(item, dict)]
-            # list of vectors [[...], ...]
+                results = []
+                for item in c:
+                    emb = item.get("embedding") if isinstance(item, dict) else None
+                    # Use zero-vector as fallback to keep indices aligned
+                    if isinstance(emb, list) and len(emb) > 0 and all(v is not None for v in emb):
+                        results.append(emb)
+                    else:
+                        logger.warning("Corrupt embedding found. Using zero-vector fallback for alignment.")
+                        # Try to find a valid dimension
+                        dim = 1536 # common default
+                        for other in c:
+                            if isinstance(other, dict) and isinstance(other.get("embedding"), list):
+                                dim = len(other["embedding"])
+                                break
+                        results.append([0.0] * dim)
+                return results
+                
             if isinstance(first, list):
-                return [item for item in c if isinstance(item, list)]
+                results = []
+                dim = len(first) if first else 1536
+                for item in c:
+                    if isinstance(item, list) and len(item) == dim and all(v is not None for v in item):
+                        results.append(item)
+                    else:
+                        logger.warning("Corrupt embedding item found. Using zero-vector fallback.")
+                        results.append([0.0] * dim)
+                return results
 
         keys = sorted(list(data.keys()))
         raise ValueError(

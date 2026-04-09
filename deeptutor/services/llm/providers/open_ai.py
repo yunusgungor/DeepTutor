@@ -67,6 +67,18 @@ class OpenAIProvider(BaseLLMProvider):
             base_url=self.base_url or None,
             http_client=http_client,
         )
+        self._http_client = http_client
+
+    async def aclose(self) -> None:
+        """Close the HTTP client if it was created by us."""
+        if self._http_client:
+            await self._http_client.aclose()
+
+    async def __aenter__(self) -> "OpenAIProvider":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.aclose()
 
     @_typed_track_llm_call("openai")
     async def complete(self, prompt: str, **kwargs: object) -> TutorResponse:

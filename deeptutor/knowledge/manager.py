@@ -233,6 +233,8 @@ class KnowledgeBaseManager:
         # Read knowledge base list from config file
         config_kbs = self.config.get("knowledge_bases", {})
         kb_list = set(config_kbs.keys())
+        # Track normalized names for case-insensitive discovery check
+        normalized_kb_list = {k.lower() for k in kb_list}
 
         # Also scan directory for KBs that may not be registered yet
         # This ensures backward compatibility and auto-discovery
@@ -242,8 +244,8 @@ class KnowledgeBaseManager:
                 if not item.is_dir() or item.name.startswith(("__", ".")):
                     continue
                     
-                # Skip if already in config
-                if item.name in kb_list:
+                # Skip if already in config (case-insensitive check)
+                if item.name.lower() in normalized_kb_list:
                     continue
                     
                 # Check if this is a valid KB directory (legacy rag_storage or llamaindex_storage)
@@ -257,6 +259,7 @@ class KnowledgeBaseManager:
                 if is_valid_kb:
                     # Auto-register this KB to kb_config.json
                     kb_list.add(item.name)
+                    normalized_kb_list.add(item.name.lower())
                     self._auto_register_kb(item.name)
                     config_changed = True
             
@@ -265,6 +268,46 @@ class KnowledgeBaseManager:
                 self._save_config()
 
         return sorted(kb_list)
+    
+    def _resolve_name(self, name: str | None) -> str | None:
+        """Resolve a knowledge base name to its authoritative case (key in config).
+        
+        Args:
+            name: The name to resolve (can be different case than stored).
+            
+        Returns:
+            The authoritative name if found, else the original name.
+        """
+        if name is None:
+            return self.get_default()
+            
+        # Ensure config is loaded
+        if not hasattr(self, "config") or not self.config:
+            self.config = self._load_config()
+            
+        config_kbs = self.config.get("knowledge_bases", {})
+        
+        # 1. Exact match in config
+        if name in config_kbs:
+            return name
+            
+        # 2. Case-insensitive match in config
+        name_lower = name.lower()
+        for key in config_kbs:
+            if key.lower() == name_lower:
+                return key
+                
+        # 3. Check discovered list (might not be in config yet)
+        kb_list = self.list_knowledge_bases()
+        if name in kb_list:
+            return name
+            
+        # 4. Case-insensitive match in discovered list
+        for kb in kb_list:
+            if kb.lower() == name_lower:
+                return kb
+                
+        return name
     
     def _auto_register_kb(self, name: str):
         """Auto-register an existing KB to kb_config.json.
@@ -338,14 +381,13 @@ class KnowledgeBaseManager:
 
     def get_knowledge_base_path(self, name: str | None = None) -> Path:
         """Get path to a knowledge base"""
-        if name is None:
-            name = self.config.get("default")
-            if name is None:
-                raise ValueError("No default knowledge base set")
+        kb_name = self._resolve_name(name)
+        if kb_name is None:
+            raise ValueError("No knowledge base name provided and no default set")
 
-        kb_dir = self.base_dir / name
+        kb_dir = self.base_dir / kb_name
         if not kb_dir.exists():
-            raise ValueError(f"Knowledge base not found: {name}")
+            raise ValueError(f"Knowledge base not found: {name or 'default'}")
 
         return kb_dir
 
@@ -421,11 +463,9 @@ class KnowledgeBaseManager:
         Source:
         1. kb_config.json (authoritative source)
         """
-        kb_name = name
+        kb_name = self._resolve_name(name)
         if kb_name is None:
-            kb_name = self.get_default()
-            if kb_name is None:
-                return {}
+            return {}
         
         # First, try kb_config.json (authoritative source)
         self.config = self._load_config()
@@ -456,12 +496,13 @@ class KnowledgeBaseManager:
         3. Falls back to metadata.json for legacy KBs
         4. Collects statistics about files and RAG status
         """
-        # Reload config to get latest status
-        self.config = self._load_config()
-
-        kb_name = name or self.get_default()
+        # Resolve authoritative name
+        kb_name = self._resolve_name(name)
         if kb_name is None:
             raise ValueError("No knowledge base name provided and no default set")
+
+        # Reload config to get latest status
+        self.config = self._load_config()
 
         # Get knowledge base path
         kb_dir = self.base_dir / kb_name
@@ -584,34 +625,47 @@ class KnowledgeBaseManager:
         Returns:
             True if deleted successfully
         """
-        if name not in self.list_knowledge_bases():
+        # Resolve authoritative name
+        authoritative_name = self._resolve_name(name)
+        if authoritative_name is None or authoritative_name not in self.list_knowledge_bases():
             raise ValueError(f"Knowledge base not found: {name}")
 
-        kb_dir = self.get_knowledge_base_path(name)
+        # Reload config to ensure we have latest data
+        self.config = self._load_config()
+
+        # Use the authoritative name for folder paths
+        kb_dir = self.base_dir / authoritative_name
 
         if not confirm:
             # Ask for confirmation in CLI
-            print(f"⚠️  Warning: This will permanently delete the knowledge base '{name}'")
+            print(f"⚠️  Warning: This will permanently delete the knowledge base '{authoritative_name}'")
             print(f"   Path: {kb_dir}")
             response = input("Are you sure? Type 'yes' to confirm: ")
             if response.lower() != "yes":
                 print("Deletion cancelled.")
                 return False
 
-        # Delete the directory
-        shutil.rmtree(kb_dir)
+        # 1. Delete the directory if it exists
+        directory_deleted = False
+        if kb_dir.exists():
+            shutil.rmtree(kb_dir)
+            directory_deleted = True
+        else:
+            logger.warning(f"KB directory already gone: {kb_dir}")
 
-        # Remove from config
-        if name in self.config.get("knowledge_bases", {}):
-            del self.config["knowledge_bases"][name]
+        # 2. Remove from config using the authoritative key
+        config_removed = False
+        if authoritative_name in self.config.get("knowledge_bases", {}):
+            del self.config["knowledge_bases"][authoritative_name]
+            config_removed = True
 
-        # Update default if this was the default
-        if self.config.get("default") == name:
+        # 3. Update default if this was the default
+        if self.config.get("default") == authoritative_name:
             remaining = self.list_knowledge_bases()
             self.config["default"] = remaining[0] if remaining else None
 
         self._save_config()
-        return True
+        return directory_deleted or config_removed
 
     def clean_rag_storage(self, name: str | None = None, backup: bool = True) -> bool:
         """
