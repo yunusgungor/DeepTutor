@@ -699,7 +699,8 @@ async def create_knowledge_base(
     """Create a new knowledge base and initialize it with files."""
     try:
         manager = get_kb_manager()
-        if name in manager.list_knowledge_bases():
+        existing_kbs = manager.list_knowledge_bases()
+        if any(name.lower() == existing.lower() for existing in existing_kbs):
             raise HTTPException(status_code=400, detail=f"Knowledge base '{name}' already exists")
 
         rag_provider = _validate_registered_provider(rag_provider)

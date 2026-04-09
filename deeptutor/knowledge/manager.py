@@ -102,11 +102,28 @@ class KnowledgeBaseManager:
 
                 # Migration: normalize legacy providers to llamaindex and
                 # mark legacy index-only KBs as needs_reindex.
+                # Also deduplicate keys case-insensitively.
                 knowledge_bases = config.get("knowledge_bases", {})
                 config_changed = False
-                for kb_name, kb_entry in knowledge_bases.items():
+                
+                seen_lower = {} # lower_name -> original_name
+                duplicates_to_remove = []
+
+                for kb_name in list(knowledge_bases.keys()):
+                    kb_entry = knowledge_bases[kb_name]
                     if not isinstance(kb_entry, dict):
                         continue
+                    
+                    # Deduplication check
+                    name_lower = kb_name.lower()
+                    if name_lower in seen_lower:
+                        # Duplicate found! Keep the one that has more info or is capitalized
+                        # For now, just remove subsequent ones to keep it simple
+                        logger.warning(f"Removing duplicate KB entry (case mismatch): {kb_name}")
+                        duplicates_to_remove.append(kb_name)
+                        config_changed = True
+                        continue
+                    seen_lower[name_lower] = kb_name
 
                     raw_provider = kb_entry.get("rag_provider")
                     normalized_provider = normalize_provider_name(raw_provider or DEFAULT_PROVIDER)
@@ -131,6 +148,9 @@ class KnowledgeBaseManager:
                         if not kb_entry.get("needs_reindex", False):
                             kb_entry["needs_reindex"] = True
                             config_changed = True
+
+                for dup in duplicates_to_remove:
+                    del knowledge_bases[dup]
 
                 if config_changed:
                     try:
@@ -163,21 +183,10 @@ class KnowledgeBaseManager:
         status: str,
         progress: dict | None = None,
     ):
-        """
-        Update knowledge base status and progress in kb_config.json.
-
-        Args:
-            name: Knowledge base name
-            status: Status string ("initializing", "processing", "ready", "error")
-            progress: Optional progress dict with keys like:
-                - stage: Current stage name
-                - message: Human-readable message
-                - percent: Progress percentage (0-100)
-                - current: Current item number
-                - total: Total items
-                - file_name: Current file being processed
-                - error: Error message (if status is "error")
-        """
+        """Update knowledge base status and progress. Handles names case-insensitively."""
+        # Resolve authoritative name (avoids duplication if case-mismatch)
+        name = self._resolve_name(name)
+        
         # Reload config to get latest state
         self.config = self._load_config()
 
@@ -363,7 +372,10 @@ class KnowledgeBaseManager:
         logger.info(f"Auto-registered KB '{name}' to kb_config.json")
 
     def register_knowledge_base(self, name: str, description: str = "", set_default: bool = False):
-        """Register a knowledge base"""
+        """Register a knowledge base. Resolves name case-insensitively."""
+        # Resolve authoritative name if already exists with different case
+        name = self._resolve_name(name)
+        
         kb_dir = self.base_dir / name
         if not kb_dir.exists():
             raise ValueError(f"Knowledge base directory does not exist: {kb_dir}")

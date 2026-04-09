@@ -300,7 +300,9 @@ export default function KnowledgePage() {
         const progress = kb.progress ?? kb.statistics?.progress;
         if (status && status !== "ready" && status !== "error") {
           setProgressMap((prev) => ({ ...prev, [kb.name]: progress || prev[kb.name] || {} }));
-          subscribeProgress(kb.name);
+          if (!socketsRef.current[kb.name]) {
+            subscribeProgress(kb.name);
+          }
         }
       }
     } catch (error) {
