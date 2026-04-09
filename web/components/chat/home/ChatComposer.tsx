@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Paperclip,
   Sparkles,
+  Square,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -113,6 +114,7 @@ export default function ChatComposer({
   onToggleTool,
   onToggleResearchSource,
   onSend,
+  onCancel,
   onRemoveAttachment,
   onRemoveHistory,
   onRemoveNotebook,
@@ -175,6 +177,7 @@ export default function ChatComposer({
   onToggleTool: (tool: ToolDef["name"]) => void;
   onToggleResearchSource: (source: ResearchSource) => void;
   onSend: () => void;
+  onCancel?: () => void;
   onRemoveAttachment: (index: number) => void;
   onRemoveHistory: (sessionId: string) => void;
   onRemoveNotebook: (notebookId: string) => void;
@@ -441,25 +444,30 @@ export default function ChatComposer({
                   ))}
                 </select>
 
-                <button
-                  onClick={onSend}
-                  disabled={
-                    (!input.trim() &&
-                      !attachments.length &&
-                      !selectedNotebookRecords.length &&
-                      !selectedHistorySessions.length) ||
-                    isStreaming ||
-                    (isResearchMode && Object.keys(researchValidationErrors).length > 0)
-                  }
-                  className="rounded-full bg-[var(--primary)] p-[7px] text-white shadow-[0_4px_12px_rgba(195,90,44,0.15)] transition-[transform,opacity,box-shadow] hover:shadow-[0_6px_16px_rgba(195,90,44,0.22)] disabled:opacity-25 disabled:shadow-none"
-                  aria-label={t("Send")}
-                >
                   {isStreaming ? (
-                    <Loader2 size={15} className="animate-spin" />
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onCancel?.(); }}
+                      className="rounded-full bg-red-500 p-[7px] text-white shadow-[0_4px_12px_rgba(239,68,68,0.2)] transition-[transform,opacity,box-shadow] hover:bg-red-600 hover:shadow-[0_6px_16px_rgba(239,68,68,0.3)] animate-pulse"
+                      aria-label={t("Stop")}
+                    >
+                      <Square size={15} strokeWidth={2.5} fill="currentColor" />
+                    </button>
                   ) : (
-                    <ArrowUp size={15} strokeWidth={2.5} />
+                    <button
+                      onClick={onSend}
+                      disabled={
+                        (!input.trim() &&
+                          !attachments.length &&
+                          !selectedNotebookRecords.length &&
+                          !selectedHistorySessions.length) ||
+                        (isResearchMode && Object.keys(researchValidationErrors).length > 0)
+                      }
+                      className="rounded-full bg-[var(--primary)] p-[7px] text-white shadow-[0_4px_12px_rgba(195,90,44,0.15)] transition-[transform,opacity,box-shadow] hover:shadow-[0_6px_16px_rgba(195,90,44,0.22)] disabled:opacity-25 disabled:shadow-none"
+                      aria-label={t("Send")}
+                    >
+                      <ArrowUp size={15} strokeWidth={2.5} />
+                    </button>
                   )}
-                </button>
               </div>
             </div>
           </div>

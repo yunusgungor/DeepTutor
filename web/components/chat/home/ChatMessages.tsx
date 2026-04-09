@@ -304,7 +304,6 @@ export function ChatMessageList({
         if (msg.role === "user") {
           const showInlineControls =
             i === activeUserIndex &&
-            (!msg.capability || msg.capability === "chat") &&
             Boolean(msg.requestSnapshot) &&
             activeAssistantMessage?.role === "assistant";
           return (

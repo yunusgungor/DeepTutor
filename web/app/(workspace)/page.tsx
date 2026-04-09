@@ -799,6 +799,7 @@ export default function HomePage() {
           onToggleTool={toggleTool}
           onToggleResearchSource={toggleResearchSource}
           onSend={handleSend}
+          onCancel={cancelStreamingTurn}
           onRemoveAttachment={removeAttachment}
           onRemoveHistory={(sessionId) =>
             setSelectedHistorySessions((prev) =>
